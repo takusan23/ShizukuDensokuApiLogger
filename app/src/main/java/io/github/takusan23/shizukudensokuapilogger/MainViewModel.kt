@@ -164,7 +164,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ).let { int -> NetworkScan(int, defaultSubscriptionId) }
 
                 try {
-                    delay(300.seconds)
+                    delay(30.seconds)
                 } finally {
                     scan.stopScan()
                 }

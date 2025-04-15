@@ -8,6 +8,8 @@ import android.telephony.CellIdentityLte
 import android.telephony.CellIdentityNr
 import android.telephony.CellIdentityTdscdma
 import android.telephony.CellIdentityWcdma
+import android.text.BidiFormatter
+import android.text.TextDirectionHeuristics
 
 enum class NetworkGeneration {
     ERROR,
@@ -41,7 +43,7 @@ val CellIdentity.band
     }
 
 val CellIdentity.cellId
-    get() = when(this){
+    get() = when (this) {
         is CellIdentityGsm -> null
         is CellIdentityCdma, is CellIdentityWcdma, is CellIdentityTdscdma -> null
         is CellIdentityLte -> this.pci
@@ -50,5 +52,11 @@ val CellIdentity.cellId
 
     }
 
-val CellIdentity.plmn
-    get() = this.mccString + this.mncString
+val CellIdentity.networkTitle: String?
+    get() {
+        operatorAlphaLong?.takeIf { it.isNotBlank() }?.let { return it.toString() }
+        operatorAlphaShort?.takeIf { it.isNotBlank() }?.let { return it.toString() }
+        val operatorNumeric = plmn ?: return null
+        val bidiFormatter = BidiFormatter.getInstance()
+        return bidiFormatter.unicodeWrap(operatorNumeric, TextDirectionHeuristics.LTR)
+    }

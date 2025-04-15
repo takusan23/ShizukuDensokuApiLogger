@@ -2,6 +2,7 @@ package io.github.takusan23.shizukudensokuapilogger
 
 import android.annotation.SuppressLint
 import android.telephony.ServiceState
+import android.telephony.TelephonyManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -89,7 +90,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 }
             }
 
-            items(logList.value, key = { it.toString() }) { log ->
+            items(logList.value, key = { it.hashCode() }) { log ->
                 LogItem(logData = log)
                 HorizontalDivider()
             }
@@ -114,19 +115,23 @@ private fun LogItem(
 
         when (val type = logData.logType) {
             is LogData.LogType.BroadcastLog -> {
-                /* do nothing */
+                Text(text = "action=${type.action}, extraKeys=${type.keyValue.entries}")
             }
 
             is LogData.LogType.PhysicalChannelConfigLog -> {
-                /* do nothing */
+                val bandList = type.configs.map {
+                    "{generation=${TelephonyManager.getNetworkTypeName(it.networkType)}, band=${it.band}}, pci=${it.physicalCellId}}"
+                }
+
+                Text(text = bandList.toString())
             }
 
             is LogData.LogType.CellInfoLog -> {
                 val plmnBandList = type.cellInfoList.map {
-                    "{plmn=${it.cellIdentity.plmn}, band=${it.cellIdentity.band.toString()}, pci=${it.cellIdentity.cellId}}"
+                    "{generation=${it.cellIdentity.generation}, plmn=${it.cellIdentity.plmn}, band=${it.cellIdentity.band.toString()}, pci=${it.cellIdentity.cellId}}"
                 }
 
-                Text(text = "plmnBandList=$plmnBandList")
+                Text(text = plmnBandList.toString())
             }
 
             is LogData.LogType.RegistrationFailedLog -> {
@@ -147,9 +152,7 @@ private fun LogItem(
 
             is LogData.LogType.ServiceStateLog -> {
                 val rejectCause = type.serviceState.networkRegistrationInfoList
-                    .mapNotNull { ErrorResolve3gpp.resolveCauseFromTs24501AnnexA(it.rejectCause) }
-                    .joinToString()
-                    .ifEmpty { null }
+                    .map { ErrorResolve3gpp.resolveCauseFromTs24501AnnexA(it.rejectCause) }
                 val shortText = listOf(
                     "name=${type.serviceState.operatorAlphaLongRaw}",
                     "state=${type.serviceState.state}(${ServiceState.rilServiceStateToString(type.serviceState.state)})",
@@ -161,11 +164,18 @@ private fun LogItem(
             }
 
             is LogData.LogType.SignalStrengthLog -> {
-                /* do nothing */
+                Text(text = type.signalStrength.cellSignalStrengths.toString())
             }
 
             is LogData.LogType.NetworkScanLog -> {
-                /* do nothing */
+                val shortText = type.cellInfoList
+                    ?.groupBy { it.cellIdentity.plmn }
+                    ?.map { (carrierName, cellInfoList) ->
+                        val genList = cellInfoList.map { it.cellIdentity.generation }.distinct()
+                        "{generation=$genList, carrierName=$carrierName}"
+                    }
+
+                Text(text = "status=${type.status.name}, scanResult=$shortText")
             }
         }
 
