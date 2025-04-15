@@ -1,5 +1,7 @@
 package io.github.takusan23.shizukudensokuapilogger
 
+import android.annotation.SuppressLint
+import android.telephony.ServiceState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -10,15 +12,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
@@ -62,8 +70,9 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     FilterType.entries.forEach { type ->
+                        val isSelected = type in currentFilter.value
                         FilterChip(
-                            selected = type in currentFilter.value,
+                            selected = isSelected,
                             onClick = {
                                 if (type in currentFilter.value) {
                                     viewModel.removeFilter(type)
@@ -71,13 +80,16 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                                     viewModel.addFilter(type)
                                 }
                             },
-                            label = { Text(text = type.name) }
+                            label = { Text(text = type.name) },
+                            leadingIcon = if (isSelected) {
+                                { Icon(imageVector = Icons.Default.Check, contentDescription = null) }
+                            } else null
                         )
                     }
                 }
             }
 
-            items(logList.value) { log ->
+            items(logList.value, key = { it.toString() }) { log ->
                 LogItem(logData = log)
                 HorizontalDivider()
             }
@@ -85,22 +97,80 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     }
 }
 
+@SuppressLint("MissingPermission")
 @Composable
 private fun LogItem(
     modifier: Modifier = Modifier,
     logData: LogData
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(text = "Time: ${simpleDateFormat.format(logData.time)}")
+    val isExpanded = remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .toggleable(value = isExpanded.value, onValueChange = { isExpanded.value = it })
+    ) {
+        Text(text = "${logData.logType.convertFilterType} Time: ${simpleDateFormat.format(logData.time)}")
 
         when (val type = logData.logType) {
-            is LogData.LogType.BroadcastLog -> Text(text = type.toString())
-            is LogData.LogType.CellInfoLog -> Text(text = type.toString())
-            is LogData.LogType.PhysicalChannelConfigLog -> Text(text = type.toString())
-            is LogData.LogType.RegistrationFailedLog -> Text(text = type.toString())
-            is LogData.LogType.ServiceStateLog -> Text(text = type.toString())
-            is LogData.LogType.SignalStrengthLog -> Text(text = type.toString())
-            is LogData.LogType.NetworkScanLog -> Text(text = type.toString())
+            is LogData.LogType.BroadcastLog -> {
+                /* do nothing */
+            }
+
+            is LogData.LogType.PhysicalChannelConfigLog -> {
+                /* do nothing */
+            }
+
+            is LogData.LogType.CellInfoLog -> {
+                val plmnBandList = type.cellInfoList.map {
+                    "{plmn=${it.cellIdentity.plmn}, band=${it.cellIdentity.band.toString()}, pci=${it.cellIdentity.cellId}}"
+                }
+
+                Text(text = "plmnBandList=$plmnBandList")
+            }
+
+            is LogData.LogType.RegistrationFailedLog -> {
+                val causeCodeText = when (type.cellIdentity.generation) {
+                    NetworkGeneration.LTE -> ErrorResolve3gpp.resolveCauseFromTS24501(type.causeCode)
+                    NetworkGeneration.NR -> ErrorResolve3gpp.resolveCauseFromTs24301(type.causeCode)
+                    else -> null
+                }
+                val shortText = listOf(
+                    "${type.cellIdentity.generation}",
+                    "PLMN=${type.chosenPlmn}",
+                    "causeCode=${type.causeCode}($causeCodeText)",
+                    "additionalCauseCode=${type.additionalCauseCode}"
+                ).joinToString()
+
+                Text(text = shortText)
+            }
+
+            is LogData.LogType.ServiceStateLog -> {
+                val rejectCause = type.serviceState.networkRegistrationInfoList
+                    .mapNotNull { ErrorResolve3gpp.resolveCauseFromTs24501AnnexA(it.rejectCause) }
+                    .joinToString()
+                    .ifEmpty { null }
+                val shortText = listOf(
+                    "name=${type.serviceState.operatorAlphaLongRaw}",
+                    "state=${type.serviceState.state}(${ServiceState.rilServiceStateToString(type.serviceState.state)})",
+                    "bandwidths=${type.serviceState.cellBandwidths.toList()}",
+                    "rejectCause=$rejectCause"
+                ).joinToString()
+
+                Text(text = shortText)
+            }
+
+            is LogData.LogType.SignalStrengthLog -> {
+                /* do nothing */
+            }
+
+            is LogData.LogType.NetworkScanLog -> {
+                /* do nothing */
+            }
+        }
+
+        if (isExpanded.value) {
+            Text(text = logData.logType.toString())
         }
     }
 }

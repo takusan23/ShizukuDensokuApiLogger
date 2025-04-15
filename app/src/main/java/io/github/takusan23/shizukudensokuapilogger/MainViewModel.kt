@@ -115,7 +115,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             _logList.value = listOf(
                                 LogData(
                                     logType = LogData.LogType.NetworkScanLog(
-                                        status = LogData.NetworkScanStatus.CALLBACK_SCAN_COMPLETE,
+                                        status = LogData.NetworkScanStatus.CALLBACK_SCAN_RESULTS,
                                         cellInfoList = cellInfo
                                     )
                                 )

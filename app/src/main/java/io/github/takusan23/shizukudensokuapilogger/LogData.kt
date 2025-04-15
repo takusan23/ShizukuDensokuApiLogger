@@ -42,7 +42,6 @@ data class LogData(
     }
 
     enum class NetworkScanStatus {
-        CALLBACK_RESTRICTED_SCAN_RESULTS,
         CALLBACK_SCAN_RESULTS,
         CALLBACK_SCAN_ERROR,
         CALLBACK_SCAN_COMPLETE
