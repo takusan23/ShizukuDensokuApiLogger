@@ -2,7 +2,6 @@ package io.github.takusan23.shizukudensokuapilogger
 
 import android.telephony.CellIdentity
 import android.telephony.CellInfo
-import android.telephony.CellSignalStrength
 import android.telephony.PhysicalChannelConfig
 import android.telephony.ServiceState
 import android.telephony.SignalStrength
@@ -20,6 +19,11 @@ data class LogData(
 
         data class SignalStrengthLog(val signalStrength: SignalStrength) : LogType
 
+        data class NetworkScanLog(
+            val status: NetworkScanStatus,
+            val cellInfoList: List<CellInfo>? = null
+        ) : LogType
+
         data class RegistrationFailedLog(
             val cellIdentity: CellIdentity,
             val chosenPlmn: String,
@@ -35,6 +39,13 @@ data class LogData(
 
         data class PhysicalChannelConfigLog(val configs: List<PhysicalChannelConfig>) : LogType
 
+    }
+
+    enum class NetworkScanStatus {
+        CALLBACK_RESTRICTED_SCAN_RESULTS,
+        CALLBACK_SCAN_RESULTS,
+        CALLBACK_SCAN_ERROR,
+        CALLBACK_SCAN_COMPLETE
     }
 
     enum class BroadcastAction(val actionString: String) {

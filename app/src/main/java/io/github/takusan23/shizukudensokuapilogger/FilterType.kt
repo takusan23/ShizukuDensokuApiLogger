@@ -10,6 +10,7 @@ enum class FilterType {
     CellInfoLog,
     SignalStrengthLog,
     ServiceStateLog,
+    NetworkScanLog,
     RegistrationFailedLog,
     BroadcastLog,
     PhysicalChannelConfigLog
@@ -23,4 +24,5 @@ val LogData.LogType.convertFilterType: FilterType
         is RegistrationFailedLog -> FilterType.RegistrationFailedLog
         is ServiceStateLog -> FilterType.ServiceStateLog
         is LogData.LogType.SignalStrengthLog -> FilterType.SignalStrengthLog
+        is LogData.LogType.NetworkScanLog -> FilterType.NetworkScanLog
     }

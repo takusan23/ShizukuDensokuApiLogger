@@ -27,6 +27,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.text.SimpleDateFormat
 
+// TODO 保存機能
+// TODO 3GPP のエラーをマッピングする
+// TODO 簡略表示
 
 private val simpleDateFormat = SimpleDateFormat("HH:mm:ss")
 
@@ -97,6 +100,7 @@ private fun LogItem(
             is LogData.LogType.RegistrationFailedLog -> Text(text = type.toString())
             is LogData.LogType.ServiceStateLog -> Text(text = type.toString())
             is LogData.LogType.SignalStrengthLog -> Text(text = type.toString())
+            is LogData.LogType.NetworkScanLog -> Text(text = type.toString())
         }
     }
 }

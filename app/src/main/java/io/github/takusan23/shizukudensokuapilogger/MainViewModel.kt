@@ -6,15 +6,27 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Binder
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Message
+import android.os.Messenger
 import android.os.ServiceManager
+import android.telephony.AccessNetworkConstants.AccessNetworkType
 import android.telephony.CellIdentity
 import android.telephony.CellInfo
 import android.telephony.ICellInfoCallback
+import android.telephony.NetworkScan
+import android.telephony.NetworkScanRequest
+import android.telephony.PhoneCapability
 import android.telephony.PhysicalChannelConfig
+import android.telephony.RadioAccessSpecifier
 import android.telephony.ServiceState
 import android.telephony.SignalStrength
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
+import android.telephony.TelephonyScanManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -30,6 +42,7 @@ import kotlinx.coroutines.launch
 import rikka.shizuku.ShizukuBinderWrapper
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import kotlin.time.Duration.Companion.seconds
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -73,7 +86,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         listen()
         registerBroadcast()
-        updateCellInfo()
+        startPollingCellInfo()
+        startPollingNetworkScan()
     }
 
     fun addFilter(filterType: FilterType) {
@@ -84,7 +98,129 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentFilter.value -= filterType
     }
 
-    private fun updateCellInfo() {
+    private fun startPollingNetworkScan() {
+        val mLooper = HandlerThread("startNetworkScan").apply { start() }
+        val mHandler = object : Handler(mLooper.looper) {
+            override fun handleMessage(msg: Message) {
+                super.handleMessage(msg)
+
+                when (msg.what) {
+                    TelephonyScanManager.CALLBACK_RESTRICTED_SCAN_RESULTS,
+                    TelephonyScanManager.CALLBACK_SCAN_RESULTS -> {
+                        runCatching {
+                            val bundle = msg.data
+                            val parcelableArray = bundle.getParcelableArray("scanResult") ?: return
+                            val cellInfo = parcelableArray.indices.map { i -> parcelableArray[i] as CellInfo }
+
+                            _logList.value = listOf(
+                                LogData(
+                                    logType = LogData.LogType.NetworkScanLog(
+                                        status = LogData.NetworkScanStatus.CALLBACK_SCAN_COMPLETE,
+                                        cellInfoList = cellInfo
+                                    )
+                                )
+                            ) + _logList.value
+                        }
+                    }
+
+                    TelephonyScanManager.CALLBACK_SCAN_ERROR -> {
+                        val errorCode = msg.arg1
+
+                        _logList.value = listOf(
+                            LogData(
+                                logType = LogData.LogType.NetworkScanLog(
+                                    status = LogData.NetworkScanStatus.CALLBACK_SCAN_ERROR,
+                                    cellInfoList = null
+                                )
+                            )
+                        ) + _logList.value
+                    }
+
+                    TelephonyScanManager.CALLBACK_SCAN_COMPLETE -> {
+                        _logList.value = listOf(
+                            LogData(
+                                logType = LogData.LogType.NetworkScanLog(
+                                    status = LogData.NetworkScanStatus.CALLBACK_SCAN_COMPLETE,
+                                    cellInfoList = null
+                                )
+                            )
+                        ) + _logList.value
+                    }
+                }
+            }
+        }
+        val mMessenger = Messenger(mHandler)
+
+        viewModelScope.launch {
+            while (true) {
+                val scan = telephony.requestNetworkScan(
+                    defaultSubscriptionId,
+                    true,
+                    createNetworkScan(),
+                    mMessenger,
+                    Binder(),
+                    telephony.currentPackageName,
+                    context.attributionTag
+                ).let { int -> NetworkScan(int, defaultSubscriptionId) }
+
+                try {
+                    delay(300.seconds)
+                } finally {
+                    scan.stopScan()
+                }
+            }
+        }
+    }
+
+    /** Create network scan for allowed network types. */
+    private fun createNetworkScan(): NetworkScanRequest {
+
+        fun hasNrSaCapability(): Boolean {
+            val phoneCapability = telephony.phoneCapability
+            return PhoneCapability.DEVICE_NR_CAPABILITY_SA in phoneCapability.deviceNrCapabilities
+        }
+
+        fun getAllowedNetworkTypes(): List<Int> {
+            val networkTypeBitmap3gpp = telephony.getAllowedNetworkTypesBitmask(defaultSubscriptionId).toLong() and TelephonyManager.NETWORK_STANDARDS_FAMILY_BITMASK_3GPP
+            return buildList {
+                // If the allowed network types are unknown or if they are of the right class, scan for
+                // them; otherwise, skip them to save scan time and prevent users from being shown
+                // networks that they can't connect to.
+                if (networkTypeBitmap3gpp == 0L || networkTypeBitmap3gpp and TelephonyManager.NETWORK_CLASS_BITMASK_2G != 0L) {
+                    add(AccessNetworkType.GERAN)
+                }
+                if (networkTypeBitmap3gpp == 0L || networkTypeBitmap3gpp and TelephonyManager.NETWORK_CLASS_BITMASK_3G != 0L) {
+                    add(AccessNetworkType.UTRAN)
+                }
+                if (networkTypeBitmap3gpp == 0L || networkTypeBitmap3gpp and TelephonyManager.NETWORK_CLASS_BITMASK_4G != 0L) {
+                    add(AccessNetworkType.EUTRAN)
+                }                // If a device supports 5G stand-alone then the code below should be re-enabled; however
+                // a device supporting only non-standalone mode cannot perform PLMN selection and camp
+                // on a 5G network, which means that it shouldn't scan for 5G at the expense of battery
+                // as part of the manual network selection process.
+                //
+                if (networkTypeBitmap3gpp == 0L || (networkTypeBitmap3gpp and TelephonyManager.NETWORK_CLASS_BITMASK_5G != 0L && hasNrSaCapability())) {
+                    add(AccessNetworkType.NGRAN)
+                }
+            }
+        }
+
+        val allowedNetworkTypes = getAllowedNetworkTypes()
+        val radioAccessSpecifiers = allowedNetworkTypes
+            .map { RadioAccessSpecifier(it, null, null) }
+            .toTypedArray()
+        return NetworkScanRequest(
+            NetworkScanRequest.SCAN_TYPE_ONE_SHOT,
+            radioAccessSpecifiers,
+            NetworkScanRequest.MIN_SEARCH_PERIODICITY_SEC, // one shot, not used
+            300, // config_network_scan_helper_max_search_time_sec
+            true,
+            3, // INCREMENTAL_RESULTS_PERIODICITY_SEC
+            null,
+        )
+    }
+
+    private fun startPollingCellInfo() {
         viewModelScope.launch {
             while (true) {
                 delay(5_000L)
