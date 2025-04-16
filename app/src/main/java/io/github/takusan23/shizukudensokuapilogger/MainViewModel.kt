@@ -124,6 +124,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteLog() {
+        _logList.value = emptyList()
+    }
+
     private fun startPollingNetworkScan(subscriptionId: Int) {
         val mLooper = HandlerThread("startNetworkScan").apply { start() }
         val mHandler = object : Handler(mLooper.looper) {

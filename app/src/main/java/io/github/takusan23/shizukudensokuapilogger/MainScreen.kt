@@ -57,6 +57,12 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 title = { Text(text = stringResource(id = R.string.app_name)) },
                 scrollBehavior = scrollBehavior,
                 actions = {
+                    IconButton (onClick = { viewModel.deleteLog() }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.delete_24dp),
+                            contentDescription = null
+                        )
+                    }
                     IconButton(onClick = { viewModel.saveFile() }) {
                         Icon(
                             painter = painterResource(id = R.drawable.save_24dp),
