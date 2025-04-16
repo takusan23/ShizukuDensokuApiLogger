@@ -73,9 +73,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ShizukuBinderWrapper(ServiceManager.getService("service"))
         )
 
-    private val defaultSubscriptionId: Int
-        get() = SubscriptionManager.getActiveDataSubscriptionId()
-
     private val _logList = MutableStateFlow(emptyList<LogData>())
     private val _currentFilter = MutableStateFlow(FilterType.entries.toList())
 
@@ -89,10 +86,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        listen()
         registerBroadcast()
-        startPollingCellInfo()
-        startPollingNetworkScan()
+
+        // SIM カードの枚数分
+        subscription.getActiveSubscriptionInfoList(telephony.currentPackageName, context.attributionTag, true).forEach {
+            listen(it.subscriptionId)
+            startPollingCellInfo(it.subscriptionId)
+            startPollingNetworkScan(it.subscriptionId)
+        }
     }
 
     fun addFilter(filterType: FilterType) {
@@ -123,7 +124,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun startPollingNetworkScan() {
+    private fun startPollingNetworkScan(subscriptionId: Int) {
         val mLooper = HandlerThread("startNetworkScan").apply { start() }
         val mHandler = object : Handler(mLooper.looper) {
             override fun handleMessage(msg: Message) {
@@ -139,6 +140,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                             _logList.value = listOf(
                                 LogData(
+                                    subscriptionId = subscriptionId,
                                     logType = LogData.LogType.NetworkScanLog(
                                         status = LogData.NetworkScanStatus.CALLBACK_SCAN_RESULTS,
                                         cellInfoList = cellInfo
@@ -153,6 +155,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                         _logList.value = listOf(
                             LogData(
+                                subscriptionId = subscriptionId,
                                 logType = LogData.LogType.NetworkScanLog(
                                     status = LogData.NetworkScanStatus.CALLBACK_SCAN_ERROR,
                                     cellInfoList = null
@@ -164,6 +167,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     TelephonyScanManager.CALLBACK_SCAN_COMPLETE -> {
                         _logList.value = listOf(
                             LogData(
+                                subscriptionId = subscriptionId,
                                 logType = LogData.LogType.NetworkScanLog(
                                     status = LogData.NetworkScanStatus.CALLBACK_SCAN_COMPLETE,
                                     cellInfoList = null
@@ -179,14 +183,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             while (true) {
                 val scan = telephony.requestNetworkScan(
-                    defaultSubscriptionId,
+                    subscriptionId,
                     false,
-                    createNetworkScan(),
+                    createNetworkScan(subscriptionId),
                     mMessenger,
                     Binder(),
                     telephony.currentPackageName,
                     context.attributionTag
-                ).let { int -> NetworkScan(int, defaultSubscriptionId) }
+                ).let { int -> NetworkScan(int, subscriptionId) }
 
                 try {
                     delay(30.seconds)
@@ -198,7 +202,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Create network scan for allowed network types. */
-    private fun createNetworkScan(): NetworkScanRequest {
+    private fun createNetworkScan(subscriptionId: Int): NetworkScanRequest {
 
         fun hasNrSaCapability(): Boolean {
             val phoneCapability = telephony.phoneCapability
@@ -206,7 +210,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         fun getAllowedNetworkTypes(): List<Int> {
-            val networkTypeBitmap3gpp = telephony.getAllowedNetworkTypesBitmask(defaultSubscriptionId).toLong() and TelephonyManager.NETWORK_STANDARDS_FAMILY_BITMASK_3GPP
+            val networkTypeBitmap3gpp = telephony.getAllowedNetworkTypesBitmask(subscriptionId).toLong() and TelephonyManager.NETWORK_STANDARDS_FAMILY_BITMASK_3GPP
             return buildList {
                 // If the allowed network types are unknown or if they are of the right class, scan for
                 // them; otherwise, skip them to save scan time and prevent users from being shown
@@ -245,13 +249,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun startPollingCellInfo() {
+    private fun startPollingCellInfo(subscriptionId: Int) {
         viewModelScope.launch {
             while (true) {
                 delay(5_000L)
 
                 val cellList = suspendCoroutine<List<CellInfo>?> {
-                    telephony.requestCellInfoUpdate(defaultSubscriptionId, object : ICellInfoCallback.Stub() {
+                    telephony.requestCellInfoUpdate(subscriptionId, object : ICellInfoCallback.Stub() {
                         override fun onCellInfo(state: MutableList<CellInfo>?) {
                             it.resume(state)
                         }
@@ -264,6 +268,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 _logList.value = listOf(
                     LogData(
+                        subscriptionId = subscriptionId,
                         logType = LogData.LogType.CellInfoLog(
                             cellInfoList = cellList ?: emptyList()
                         )
@@ -280,9 +285,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 intent ?: return
                 val broadcastAction = LogData.BroadcastAction.entries.firstOrNull { it.actionString == intent.action } ?: return
                 val extra = intent.extras.let { bundle -> bundle?.keySet()?.associateWith { key -> bundle.get(key).toString() } } ?: emptyMap()
+                val subscriptionId = intent.extras?.getInt(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, -1) ?: -1
 
                 _logList.value = listOf(
                     LogData(
+                        subscriptionId = subscriptionId,
                         logType = LogData.LogType.BroadcastLog(
                             action = broadcastAction,
                             keyValue = extra
@@ -300,11 +307,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         addCloseable { context.unregisterReceiver(broadcastReceiver) }
     }
 
-    private fun listen() {
+    private fun listen(subscriptionId: Int) {
         val callback = object : TelephonyCallback(), TelephonyCallback.PhysicalChannelConfigListener, TelephonyCallback.CellInfoListener, TelephonyCallback.ServiceStateListener, TelephonyCallback.RegistrationFailedListener, TelephonyCallback.SignalStrengthsListener {
             override fun onPhysicalChannelConfigChanged(configs: MutableList<PhysicalChannelConfig>) {
                 _logList.value = listOf(
                     LogData(
+                        subscriptionId = subscriptionId,
                         logType = LogData.LogType.PhysicalChannelConfigLog(
                             configs = configs
                         )
@@ -315,6 +323,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>) {
                 _logList.value = listOf(
                     LogData(
+                        subscriptionId = subscriptionId,
                         logType = LogData.LogType.CellInfoLog(
                             cellInfoList = cellInfo
                         )
@@ -325,6 +334,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             override fun onServiceStateChanged(serviceState: ServiceState) {
                 _logList.value = listOf(
                     LogData(
+                        subscriptionId = subscriptionId,
                         logType = LogData.LogType.ServiceStateLog(
                             serviceState = serviceState
                         )
@@ -335,6 +345,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             override fun onRegistrationFailed(cellIdentity: CellIdentity, chosenPlmn: String, domain: Int, causeCode: Int, additionalCauseCode: Int) {
                 _logList.value = listOf(
                     LogData(
+                        subscriptionId = subscriptionId,
                         logType = LogData.LogType.RegistrationFailedLog(
                             cellIdentity = cellIdentity,
                             chosenPlmn = chosenPlmn,
@@ -349,6 +360,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
                 _logList.value = listOf(
                     LogData(
+                        subscriptionId = subscriptionId,
                         logType = LogData.LogType.SignalStrengthLog(
                             signalStrength = signalStrength
                         )
@@ -361,7 +373,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         telephonyRegistry.listenWithEventList(
             true,
             true,
-            defaultSubscriptionId,
+            subscriptionId,
             telephony.currentPackageName,
             context.attributionTag,
             callback.callback,
@@ -381,7 +393,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             telephonyRegistry.listenWithEventList(
                 false,
                 false,
-                defaultSubscriptionId,
+                subscriptionId,
                 telephony.currentPackageName,
                 context.attributionTag,
                 callback.callback,

@@ -118,7 +118,7 @@ private fun LogItem(
             .fillMaxWidth()
             .toggleable(value = isExpanded.value, onValueChange = { isExpanded.value = it })
     ) {
-        Text(text = "${logData.logType.convertFilterType} Time: ${simpleDateFormat.format(logData.time)}")
+        Text(text = "[${logData.subscriptionId}] ${logData.logType.convertFilterType} Time: ${simpleDateFormat.format(logData.time)}")
 
         when (val type = logData.logType) {
             is LogData.LogType.BroadcastLog -> {

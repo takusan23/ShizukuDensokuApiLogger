@@ -9,6 +9,7 @@ import android.telephony.TelephonyManager
 
 data class LogData(
     val time: Long = System.currentTimeMillis(),
+    val subscriptionId: Int,
     val logType: LogType
 ) {
 
