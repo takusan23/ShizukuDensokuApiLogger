@@ -121,17 +121,17 @@ private fun LogItem(
             is LogData.LogType.PhysicalChannelConfigLog -> {
                 val bandList = type.configs.map {
                     "{generation=${TelephonyManager.getNetworkTypeName(it.networkType)}, band=${it.band}}, pci=${it.physicalCellId}}"
-                }
+                }.joinToString("\n")
 
-                Text(text = bandList.toString())
+                Text(text = bandList)
             }
 
             is LogData.LogType.CellInfoLog -> {
                 val plmnBandList = type.cellInfoList.map {
-                    "{generation=${it.cellIdentity.generation}, plmn=${it.cellIdentity.plmn}, band=${it.cellIdentity.band.toString()}, pci=${it.cellIdentity.cellId}}"
-                }
+                    "{generation=${it.cellIdentity.generation}, plmn=${it.cellIdentity.plmn}, name=${it.cellIdentity.networkTitle}, band=${it.cellIdentity.band.toString()}, pci=${it.cellIdentity.cellId}}"
+                }.joinToString("\n")
 
-                Text(text = plmnBandList.toString())
+                Text(text = plmnBandList)
             }
 
             is LogData.LogType.RegistrationFailedLog -> {
@@ -145,7 +145,7 @@ private fun LogItem(
                     "PLMN=${type.chosenPlmn}",
                     "causeCode=${type.causeCode}($causeCodeText)",
                     "additionalCauseCode=${type.additionalCauseCode}"
-                ).joinToString()
+                ).joinToString("\n")
 
                 Text(text = shortText)
             }
@@ -158,7 +158,7 @@ private fun LogItem(
                     "state=${type.serviceState.state}(${ServiceState.rilServiceStateToString(type.serviceState.state)})",
                     "bandwidths=${type.serviceState.cellBandwidths.toList()}",
                     "rejectCause=$rejectCause"
-                ).joinToString()
+                ).joinToString(separator = "\n")
 
                 Text(text = shortText)
             }
@@ -169,13 +169,16 @@ private fun LogItem(
 
             is LogData.LogType.NetworkScanLog -> {
                 val shortText = type.cellInfoList
-                    ?.groupBy { it.cellIdentity.plmn }
-                    ?.map { (carrierName, cellInfoList) ->
+                    ?.groupBy { it.cellIdentity.networkTitle to it.cellIdentity.plmn }
+                    ?.map { (namePlmnPair, cellInfoList) ->
+                        val (networkName, plmn) = namePlmnPair
                         val genList = cellInfoList.map { it.cellIdentity.generation }.distinct()
-                        "{generation=$genList, carrierName=$carrierName}"
+                        val name = cellInfoList.firstOrNull()?.cellIdentity?.networkTitle
+                        "{generation=$genList, plmn=$plmn, name=$networkName}"
                     }
+                    ?.joinToString("\n")
 
-                Text(text = "status=${type.status.name}, scanResult=$shortText")
+                Text(text = "status=${type.status.name},\n$shortText")
             }
         }
 

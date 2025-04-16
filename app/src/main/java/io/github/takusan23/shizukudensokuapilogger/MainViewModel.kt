@@ -155,7 +155,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             while (true) {
                 val scan = telephony.requestNetworkScan(
                     defaultSubscriptionId,
-                    true,
+                    false,
                     createNetworkScan(),
                     mMessenger,
                     Binder(),
