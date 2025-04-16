@@ -3,6 +3,7 @@ package io.github.takusan23.shizukudensokuapilogger
 import android.app.Application
 import android.app.IActivityManager
 import android.content.BroadcastReceiver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -12,6 +13,7 @@ import android.os.HandlerThread
 import android.os.Message
 import android.os.Messenger
 import android.os.ServiceManager
+import android.provider.MediaStore
 import android.telephony.AccessNetworkConstants.AccessNetworkType
 import android.telephony.CellIdentity
 import android.telephony.CellInfo
@@ -27,18 +29,21 @@ import android.telephony.SubscriptionManager
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.telephony.TelephonyScanManager
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.android.internal.telephony.ISub
 import com.android.internal.telephony.ITelephony
 import com.android.internal.telephony.ITelephonyRegistry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import rikka.shizuku.ShizukuBinderWrapper
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -96,6 +101,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeFilter(filterType: FilterType) {
         _currentFilter.value -= filterType
+    }
+
+    fun saveFile() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = _logList.value.toString()
+
+            val values = ContentValues().apply {
+                put(MediaStore.Files.FileColumns.DISPLAY_NAME, "Shizuku電波測定APIロガー_${System.currentTimeMillis()}.txt")
+                put(MediaStore.Files.FileColumns.RELATIVE_PATH, "Documents")
+            }
+            val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = context.contentResolver.insert(collection, values) ?: return@launch
+            context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+                writer.write(text)
+            }
+
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "保存しました", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun startPollingNetworkScan() {

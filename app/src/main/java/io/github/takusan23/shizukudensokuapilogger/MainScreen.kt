@@ -1,6 +1,7 @@
 package io.github.takusan23.shizukudensokuapilogger
 
 import android.annotation.SuppressLint
+import android.os.Build
 import android.telephony.ServiceState
 import android.telephony.TelephonyManager
 import androidx.compose.foundation.background
@@ -20,6 +21,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -30,15 +32,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.text.SimpleDateFormat
-
-// TODO 保存機能
-// TODO 3GPP のエラーをマッピングする
-// TODO 簡略表示
 
 private val simpleDateFormat = SimpleDateFormat("HH:mm:ss")
 
@@ -56,7 +55,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         topBar = {
             TopAppBar(
                 title = { Text(text = stringResource(id = R.string.app_name)) },
-                scrollBehavior = scrollBehavior
+                scrollBehavior = scrollBehavior,
+                actions = {
+                    IconButton(onClick = { viewModel.saveFile() }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.save_24dp),
+                            contentDescription = null
+                        )
+                    }
+                }
             )
         }
     ) { innerPadding ->
@@ -152,7 +159,13 @@ private fun LogItem(
 
             is LogData.LogType.ServiceStateLog -> {
                 val rejectCause = type.serviceState.networkRegistrationInfoList
-                    .map { ErrorResolve3gpp.resolveCauseFromTs24501AnnexA(it.rejectCause) }
+                    .map {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                            ErrorResolve3gpp.resolveCauseFromTs24501AnnexA(it.rejectCause)
+                        } else {
+                            null
+                        }
+                    }
                 val shortText = listOf(
                     "name=${type.serviceState.operatorAlphaLongRaw}",
                     "state=${type.serviceState.state}(${ServiceState.rilServiceStateToString(type.serviceState.state)})",
