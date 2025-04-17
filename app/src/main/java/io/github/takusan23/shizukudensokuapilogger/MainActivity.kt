@@ -1,6 +1,8 @@
 package io.github.takusan23.shizukudensokuapilogger
 
+import android.app.PictureInPictureParams
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -18,7 +20,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // リフレクション出来ない隠し API を叩くおまじない
         HiddenApiBypass.addHiddenApiExemptions("")
+
+        // 自動 PinP
+        setPictureInPictureParams(
+            PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(9, 16))
+                .setAutoEnterEnabled(true)
+                .build()
+        )
 
         setContent {
             ShizukuDensokuApiLoggerTheme {

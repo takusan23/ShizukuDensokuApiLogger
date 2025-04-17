@@ -21,6 +21,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.ShizukuDensokuApiLogger">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
