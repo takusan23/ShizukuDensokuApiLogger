@@ -37,11 +37,14 @@ import com.android.internal.telephony.ISub
 import com.android.internal.telephony.ITelephony
 import com.android.internal.telephony.ITelephonyRegistry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.ShizukuBinderWrapper
@@ -76,6 +79,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _logList = MutableStateFlow(emptyList<LogData>())
     private val _currentFilter = MutableStateFlow(FilterType.entries.toList())
 
+    private val _isNotificationMaybeFakeNetwork = MutableStateFlow(true)
+    private val _maybeFakeNetworkDialogMessage = MutableStateFlow<String?>(null)
+
     val currentFilter = _currentFilter.asStateFlow()
     val logList = combine(
         _logList,
@@ -85,14 +91,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         logList.filter { log -> log.logType.convertFilterType in filter }
     }
 
+    val isNotificationMaybeFakeNetwork = _isNotificationMaybeFakeNetwork.asStateFlow()
+    val maybeFakeNetworkDialogMessage = _maybeFakeNetworkDialogMessage.asStateFlow()
+
     init {
         registerBroadcast()
 
         // SIM カードの枚数分
-        subscription.getActiveSubscriptionInfoList(telephony.currentPackageName, context.attributionTag, true).forEach {
-            listen(it.subscriptionId)
-            startPollingCellInfo(it.subscriptionId)
-            startPollingNetworkScan(it.subscriptionId)
+        subscription.getActiveSubscriptionInfoList(telephony.currentPackageName, context.attributionTag, true).forEach { subscriptionInfo ->
+
+            // 電波関連の API を Kotlin Flow にして merge
+            viewModelScope.launch {
+                listOf(
+                    listen(subscriptionInfo.subscriptionId),
+                    startPollingCellInfo(subscriptionInfo.subscriptionId),
+                    startPollingNetworkScan(subscriptionInfo.subscriptionId)
+                ).merge().collect { logData ->
+
+                    // 不審な MCC があれば通知
+                    // "440" が日本の MCC 番号
+                    if (_isNotificationMaybeFakeNetwork.value) {
+
+                        // ネットワークスキャンとセル情報から
+                        val cellInfoList = when (val logType = logData.logType) {
+                            is LogData.LogType.NetworkScanLog -> logType.cellInfoList
+                            is LogData.LogType.CellInfoLog -> logType.cellInfoList
+                            else -> null
+                        } ?: emptyList()
+
+                        // 440/441 以外の MCC 検出
+                        val japanMcc = listOf("440", "441")
+                        if (cellInfoList.mapNotNull { it.cellIdentity.mccString }.any { it !in japanMcc }) {
+                            _maybeFakeNetworkDialogMessage.value += "440 以外の MCC を検出しました"
+                        }
+
+                        // 4G/5G 以外を検出
+                        val allowList = listOf(NetworkGeneration.LTE, NetworkGeneration.NR)
+                        if (cellInfoList.map { it.cellIdentity.generation }.any { it !in allowList }) {
+                            _maybeFakeNetworkDialogMessage.value += "4G/5G 以外を検出しました"
+                        }
+                    }
+
+                    // ログ履歴追加
+                    _logList.value = listOf(logData) + _logList.value
+                }
+            }
         }
     }
 
@@ -128,7 +171,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _logList.value = emptyList()
     }
 
-    private fun startPollingNetworkScan(subscriptionId: Int) {
+    fun closeDialog() {
+        _maybeFakeNetworkDialogMessage.value = null
+    }
+
+    fun setNotification(isEnable: Boolean) {
+        _isNotificationMaybeFakeNetwork.value = isEnable
+    }
+
+    private fun startPollingNetworkScan(subscriptionId: Int) = callbackFlow {
         val mLooper = HandlerThread("startNetworkScan").apply { start() }
         val mHandler = object : Handler(mLooper.looper) {
             override fun handleMessage(msg: Message) {
@@ -142,7 +193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val parcelableArray = bundle.getParcelableArray("scanResult") ?: return
                             val cellInfo = parcelableArray.indices.map { i -> parcelableArray[i] as CellInfo }
 
-                            _logList.value = listOf(
+                            trySend(
                                 LogData(
                                     subscriptionId = subscriptionId,
                                     logType = LogData.LogType.NetworkScanLog(
@@ -150,14 +201,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         cellInfoList = cellInfo
                                     )
                                 )
-                            ) + _logList.value
+                            )
                         }
                     }
 
                     TelephonyScanManager.CALLBACK_SCAN_ERROR -> {
                         val errorCode = msg.arg1
 
-                        _logList.value = listOf(
+                        trySend(
                             LogData(
                                 subscriptionId = subscriptionId,
                                 logType = LogData.LogType.NetworkScanLog(
@@ -165,11 +216,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     cellInfoList = null
                                 )
                             )
-                        ) + _logList.value
+                        )
                     }
 
                     TelephonyScanManager.CALLBACK_SCAN_COMPLETE -> {
-                        _logList.value = listOf(
+                        trySend(
                             LogData(
                                 subscriptionId = subscriptionId,
                                 logType = LogData.LogType.NetworkScanLog(
@@ -177,14 +228,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     cellInfoList = null
                                 )
                             )
-                        ) + _logList.value
+                        )
                     }
                 }
             }
         }
         val mMessenger = Messenger(mHandler)
 
-        viewModelScope.launch {
+        val job = launch {
             while (true) {
                 val scan = telephony.requestNetworkScan(
                     subscriptionId,
@@ -203,6 +254,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        awaitClose { job.cancel() }
     }
 
     /** Create network scan for allowed network types. */
@@ -253,8 +305,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun startPollingCellInfo(subscriptionId: Int) {
-        viewModelScope.launch {
+    private fun startPollingCellInfo(subscriptionId: Int) = callbackFlow {
+        val job = launch {
             while (true) {
                 delay(5_000L)
 
@@ -270,19 +322,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }, telephony.currentPackageName, context.attributionTag)
                 }
 
-                _logList.value = listOf(
+                trySend(
                     LogData(
                         subscriptionId = subscriptionId,
                         logType = LogData.LogType.CellInfoLog(
                             cellInfoList = cellList ?: emptyList()
                         )
                     )
-                ) + _logList.value
+                )
             }
         }
+        awaitClose { job.cancel() }
     }
 
-    private fun registerBroadcast() {
+    private fun registerBroadcast() = callbackFlow {
         val broadcastReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 context ?: return
@@ -291,7 +344,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val extra = intent.extras.let { bundle -> bundle?.keySet()?.associateWith { key -> bundle.get(key).toString() } } ?: emptyMap()
                 val subscriptionId = intent.extras?.getInt(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, -1) ?: -1
 
-                _logList.value = listOf(
+                trySend(
                     LogData(
                         subscriptionId = subscriptionId,
                         logType = LogData.LogType.BroadcastLog(
@@ -299,7 +352,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             keyValue = extra
                         )
                     )
-                ) + _logList.value
+                )
             }
         }
         val intentFilter = IntentFilter().apply {
@@ -308,46 +361,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         ContextCompat.registerReceiver(context, broadcastReceiver, intentFilter, ContextCompat.RECEIVER_EXPORTED)
-        addCloseable { context.unregisterReceiver(broadcastReceiver) }
+        awaitClose { context.unregisterReceiver(broadcastReceiver) }
     }
 
-    private fun listen(subscriptionId: Int) {
+    private fun listen(subscriptionId: Int) = callbackFlow {
         val callback = object : TelephonyCallback(), TelephonyCallback.PhysicalChannelConfigListener, TelephonyCallback.CellInfoListener, TelephonyCallback.ServiceStateListener, TelephonyCallback.RegistrationFailedListener, TelephonyCallback.SignalStrengthsListener {
             override fun onPhysicalChannelConfigChanged(configs: MutableList<PhysicalChannelConfig>) {
-                _logList.value = listOf(
+                trySend(
                     LogData(
                         subscriptionId = subscriptionId,
                         logType = LogData.LogType.PhysicalChannelConfigLog(
                             configs = configs
                         )
                     )
-                ) + _logList.value
+                )
             }
 
             override fun onCellInfoChanged(cellInfo: MutableList<CellInfo>) {
-                _logList.value = listOf(
+                trySend(
                     LogData(
                         subscriptionId = subscriptionId,
                         logType = LogData.LogType.CellInfoLog(
                             cellInfoList = cellInfo
                         )
                     )
-                ) + _logList.value
+                )
             }
 
             override fun onServiceStateChanged(serviceState: ServiceState) {
-                _logList.value = listOf(
+                trySend(
                     LogData(
                         subscriptionId = subscriptionId,
                         logType = LogData.LogType.ServiceStateLog(
                             serviceState = serviceState
                         )
                     )
-                ) + _logList.value
+                )
             }
 
             override fun onRegistrationFailed(cellIdentity: CellIdentity, chosenPlmn: String, domain: Int, causeCode: Int, additionalCauseCode: Int) {
-                _logList.value = listOf(
+                trySend(
                     LogData(
                         subscriptionId = subscriptionId,
                         logType = LogData.LogType.RegistrationFailedLog(
@@ -358,18 +411,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             additionalCauseCode = additionalCauseCode
                         )
                     )
-                ) + _logList.value
+                )
             }
 
             override fun onSignalStrengthsChanged(signalStrength: SignalStrength) {
-                _logList.value = listOf(
+                trySend(
                     LogData(
                         subscriptionId = subscriptionId,
                         logType = LogData.LogType.SignalStrengthLog(
                             signalStrength = signalStrength
                         )
                     )
-                ) + _logList.value
+                )
             }
         }
 
@@ -393,7 +446,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             true
         )
 
-        addCloseable {
+        awaitClose {
             telephonyRegistry.listenWithEventList(
                 false,
                 false,

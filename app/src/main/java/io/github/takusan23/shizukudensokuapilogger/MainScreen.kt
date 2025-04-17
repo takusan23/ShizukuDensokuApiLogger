@@ -17,11 +17,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -48,6 +51,23 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val currentFilter = viewModel.currentFilter.collectAsStateWithLifecycle(initialValue = emptyList())
     val logList = viewModel.logList.collectAsStateWithLifecycle(initialValue = emptyList())
 
+    val maybeFakeNetworkDialogMessage = viewModel.maybeFakeNetworkDialogMessage.collectAsStateWithLifecycle()
+    val isNotificationMaybeFakeNetwork = viewModel.isNotificationMaybeFakeNetwork.collectAsStateWithLifecycle()
+
+    // 疑わしい場合はダイアログ出す
+    if (maybeFakeNetworkDialogMessage.value != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.closeDialog() },
+            title = { Text(text = "疑わしいネットワークを検出しました") },
+            text = { Text(text = maybeFakeNetworkDialogMessage.value ?: "不明なエラー") },
+            confirmButton = {
+                Button(onClick = { viewModel.closeDialog() }) {
+                    Text(text = "閉じる")
+                }
+            }
+        )
+    }
+
     Scaffold(
         modifier = Modifier
             .nestedScroll(scrollBehavior.nestedScrollConnection)
@@ -57,7 +77,7 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 title = { Text(text = stringResource(id = R.string.app_name)) },
                 scrollBehavior = scrollBehavior,
                 actions = {
-                    IconButton (onClick = { viewModel.deleteLog() }) {
+                    IconButton(onClick = { viewModel.deleteLog() }) {
                         Icon(
                             painter = painterResource(id = R.drawable.delete_24dp),
                             contentDescription = null
@@ -66,6 +86,15 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     IconButton(onClick = { viewModel.saveFile() }) {
                         Icon(
                             painter = painterResource(id = R.drawable.save_24dp),
+                            contentDescription = null
+                        )
+                    }
+                    IconToggleButton(
+                        checked = isNotificationMaybeFakeNetwork.value,
+                        onCheckedChange = { viewModel.setNotification(it) }
+                    ) {
+                        Icon(
+                            painter = painterResource(id = if (isNotificationMaybeFakeNetwork.value) R.drawable.notifications_active_24dp else R.drawable.notifications_off_24dp),
                             contentDescription = null
                         )
                     }
